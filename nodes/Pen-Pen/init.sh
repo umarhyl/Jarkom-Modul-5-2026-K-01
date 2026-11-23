@@ -1,0 +1,22 @@
+#!/bin/bash
+
+cat <<EOF > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 10.64.3.194
+    netmask 255.255.255.224
+    gateway 10.64.3.193
+EOF
+
+ip addr flush dev eth0 2>/dev/null
+ip addr add 10.64.3.194/27 dev eth0
+ip link set eth0 up
+ip route replace default via 10.64.3.193
+
+cat <<EOF > /etc/resolv.conf
+nameserver 192.168.122.1
+nameserver 8.8.8.8
+EOF
