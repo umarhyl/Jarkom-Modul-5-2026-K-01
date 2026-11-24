@@ -1,14 +1,20 @@
 #!/bin/bash
 
 # Quest 9
-echo "=== Routing Table Sebelum Perbaikan ==="
-ip route show
+sysctl -w net.ipv4.ip_forward=1
 
-echo "Memulihkan rute default ke Gendou..."
+while ip rule del priority 90 2>/dev/null; do :; done
+while ip rule del lookup 100 2>/dev/null; do :; done
+ip route flush table 100 2>/dev/null
+
+ip route del blackhole 10.64.4.72/29 2>/dev/null
 ip route replace default via 10.64.4.113 dev eth0
-
-echo "Memulihkan rute ke Makoto (Switch-Radar)..."
 ip route replace 10.64.4.88/29 via 10.64.4.146 dev eth2
 
-echo "=== Routing Table Setelah Perbaikan ==="
+sysctl net.ipv4.ip_forward
+
+echo "--- IP Rules (Policy Routing) ---"
+ip rule show
+
+echo "--- Routing Table Main ---"
 ip route show

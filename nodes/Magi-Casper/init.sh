@@ -1,5 +1,4 @@
 #!/bin/bash
-# Configuration script for Host: Magi-Casper
 
 cat <<EOF > /etc/network/interfaces
 auto lo

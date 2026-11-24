@@ -1,7 +1,5 @@
 #!/bin/bash
-# Configuration script for Router: Gendou
 
-# 1. Setup persistent network interfaces
 cat <<EOF > /etc/network/interfaces
 auto lo
 iface lo inet loopback
@@ -59,8 +57,6 @@ iface eth8 inet static
 
 EOF
 
-# 2. Apply IP addresses immediately
-# Request DHCP for eth0 towards NAT1
 udhcpc -i eth0 -n -q 2>/dev/null || dhclient eth0 2>/dev/null &
 
 ip addr flush dev eth1 2>/dev/null
@@ -88,11 +84,9 @@ ip addr flush dev eth8 2>/dev/null
 ip addr add 10.64.4.133/30 dev eth8
 ip link set eth8 up
 
-# 3. Enable IP Forwarding
 sysctl -w net.ipv4.ip_forward=1
 echo 1 > /proc/sys/net/ipv4/ip_forward
 
-# 4. Static Routing
 ip route replace 10.64.4.56/29 via 10.64.4.110
 ip route replace 10.64.4.136/30 via 10.64.4.110
 ip route replace 10.64.3.192/27 via 10.64.4.110
@@ -119,7 +113,6 @@ ip route replace 10.64.0.0/23 via 10.64.4.134
 ip route replace 10.64.4.168/30 via 10.64.4.134
 ip route replace 10.64.4.0/27 via 10.64.4.134
 
-# 5. DNS Resolution
 cat <<EOF > /etc/resolv.conf
 nameserver 192.168.122.1
 nameserver 8.8.8.8
