@@ -1,7 +1,5 @@
 #!/bin/bash
 
-apt-get install iptables
-
 # Variabel jadwal dalam UTC (WIB - 7 jam)
 PILOT_START="01:00"
 PILOT_STOP="09:00"

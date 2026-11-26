@@ -1,13 +1,6 @@
 #!/bin/bash
 
-# Test quest 19
+# Test quest 19: Nyalakan listener TCP 9000 di Lilith (tujuan uji dari Zeruel & Armisael)
 pkill -f "nc -l -p 9000" 2>/dev/null
 while true; do nc -l -p 9000; done &
-
-ping -c 2 -W 2 8.8.8.8
-nc -zv -w 2 8.8.8.8 53
-echo $?
-
-ping -c 2 -W 2 10.64.4.74
-nc -zv -w 2 10.64.4.74 9000
-echo $?
+echo "Listener TCP 9000 Lilith aktif di background!"
