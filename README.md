@@ -602,28 +602,3 @@ Pengujian dilakukan terhadap port `5000` dan `5001` `Magi-Balthasar` dari `Unit-
 Hasil pengujian menunjukkan `Unit-01` berhasil mengirim pesan ke port `5000` dan `5001` `Magi-Balthasar` (`Exit code: 0` dan pesan tampil di terminal `Magi-Balthasar`), `Lilith` (`3–4 ms`) dan `Magi-Melchior` (`5 ms`) langsung menerima `Connection refused` (`Exit code: 1`) tanpa menunggu timeout, serta `Magi-Balthasar` tetap berhasil melakukan ping ke `8.8.8.8` dengan `0% packet loss`.
 
 ---
-
-### 13. Pembatasan Akses Brankas Magi-Balthasar
-
-Pada `Magi-Balthasar` (`10.64.4.59`), layanan TCP port `5000` dan `5001` dibatasi melalui [`nodes/Magi-Balthasar/quest-13.sh`](nodes/Magi-Balthasar/quest-13.sh) agar hanya dapat diakses oleh `Magi-Casper` (`10.64.4.58`) dan seluruh kategori Pilot (`Unit-01` `10.64.4.66`, `Unit-02` `10.64.4.67`, `Unit-00` `10.64.4.68`, dan `Sachiel` `10.64.3.130`). Seluruh node lain, termasuk tetangga satu switch seperti `Magi-Melchior`, langsung ditolak menggunakan target `REJECT --reject-with tcp-reset` agar koneksi langsung gagal tanpa menunggu timeout. Kebijakan default `INPUT ACCEPT` dipertahankan sehingga lalu lintas lain dan ping dari `Magi-Balthasar` ke `8.8.8.8` tetap berjalan normal.
-
-Konfigurasi pada [`nodes/Magi-Balthasar/quest-13.sh`](nodes/Magi-Balthasar/quest-13.sh):
-
-```bash
-iptables -F INPUT
-iptables -P INPUT ACCEPT
-iptables -P OUTPUT ACCEPT
-
-iptables -A INPUT -i lo -j ACCEPT
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-ALLOWED_IPS="10.64.4.58,10.64.4.66,10.64.4.67,10.64.4.68,10.64.3.130"
-iptables -A INPUT -s $ALLOWED_IPS -p tcp -m multiport --dports 5000,5001 -j ACCEPT
-iptables -A INPUT -p tcp -m multiport --dports 5000,5001 -j REJECT --reject-with tcp-reset
-```
-
-Pengujian dilakukan terhadap port `5000` dan `5001` `Magi-Balthasar` dari `Unit-01` ([`nodes/Unit-01/test-quest-13.sh`](nodes/Unit-01/test-quest-13.sh)), `Lilith` ([`nodes/Lilith/test-quest-13.sh`](nodes/Lilith/test-quest-13.sh)), dan `Magi-Melchior` ([`nodes/Magi-Melchior/test-quest-13.sh`](nodes/Magi-Melchior/test-quest-13.sh)), disertai pengujian `ping -c 3 8.8.8.8` dari `Magi-Balthasar`:
-
-![pembatasan akses magi-balthasar](screenshots/soal13.gif)
-
-Hasil pengujian menunjukkan `Unit-01` berhasil mengirim pesan ke port `5000` dan `5001` `Magi-Balthasar` (`Exit code: 0` dan pesan tampil di terminal `Magi-Balthasar`), `Lilith` (`3–4 ms`) dan `Magi-Melchior` (`5 ms`) langsung menerima `Connection refused` (`Exit code: 1`) tanpa menunggu timeout, serta `Magi-Balthasar` tetap berhasil melakukan ping ke `8.8.8.8` dengan `0% packet loss`.
