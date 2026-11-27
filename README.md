@@ -602,3 +602,243 @@ Pengujian dilakukan terhadap port `5000` dan `5001` `Magi-Balthasar` dari `Unit-
 Hasil pengujian menunjukkan `Unit-01` berhasil mengirim pesan ke port `5000` dan `5001` `Magi-Balthasar` (`Exit code: 0` dan pesan tampil di terminal `Magi-Balthasar`), `Lilith` (`3–4 ms`) dan `Magi-Melchior` (`5 ms`) langsung menerima `Connection refused` (`Exit code: 1`) tanpa menunggu timeout, serta `Magi-Balthasar` tetap berhasil melakukan ping ke `8.8.8.8` dengan `0% packet loss`.
 
 ---
+
+### 14. Pembatasan Jadwal Akses pada Pen-Pen
+
+Akses ICMP (`ping`) dan layanan TCP port `80` menuju `Pen-Pen` (`10.64.3.194`) dibatasi berdasarkan kelompok pengirim dan jadwal waktu melalui [`nodes/Pen-Pen/quest-14.sh`](nodes/Pen-Pen/quest-14.sh). Karena modul `time` pada `iptables` menggunakan standar waktu UTC (7 jam lebih lambat dari WIB), seluruh jadwal dikonversi ke UTC dan disimpan sebagai variabel di awal skrip (`PILOT_START`, `PILOT_STOP`, `PILOT_DAYS`, `STAF_START`, dan `STAF_STOP`) agar dapat diuji tanpa mengubah jam sistem:
+
+| Kelompok | Anggota (IP) | Jadwal WIB | Variabel UTC | Kebijakan |
+| --- | --- | --- | --- | --- |
+| Pilot | `Unit-01` (`10.64.4.66`), `Unit-02` (`10.64.4.67`), `Unit-00` (`10.64.4.68`), `Sachiel` (`10.64.3.130`) | `08.00 - 16.00 WIB` (Senin–Jumat) | `01:00 - 09:00` (`Mon..Fri`) | Diizinkan sesuai jadwal, ditolak di luar jadwal |
+| Staf Geofront | `Lilith` (`10.64.4.74`), `Adam` (`10.64.4.75`) | `17.00 - 23.00 WIB` (Setiap hari) | `10:00 - 16:00` | Diizinkan sesuai jadwal, ditolak di luar jadwal |
+| Terduga Dummy System | `Dummy-Plug` (`10.64.4.51`), `Entry-Plug` (`10.64.4.50`), `Spy` (`10.64.4.102`) | Tidak pernah | — | Selalu ditolak (`DROP` ICMP, `REJECT tcp-reset` TCP `80`) |
+| Lainnya | Node di luar tiga kategori di atas | Bebas | — | Tanpa pembatasan (policy `INPUT ACCEPT`) |
+
+Konfigurasi pada [`nodes/Pen-Pen/quest-14.sh`](nodes/Pen-Pen/quest-14.sh):
+
+```bash
+PILOT_START="01:00"
+PILOT_STOP="09:00"
+PILOT_DAYS="Mon,Tue,Wed,Thu,Fri"
+
+STAF_START="10:00"
+STAF_STOP="16:00"
+
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+PILOT_IPS="10.64.4.66,10.64.4.67,10.64.4.68,10.64.3.130"
+STAF_IPS="10.64.4.74,10.64.4.75"
+DUMMY_IPS="10.64.4.51,10.64.4.50,10.64.4.102"
+
+# Terduga Dummy System: selalu ditolak
+iptables -A INPUT -s $DUMMY_IPS -p icmp --icmp-type echo-request -j DROP
+iptables -A INPUT -s $DUMMY_IPS -p tcp --dport 80 -j REJECT --reject-with tcp-reset
+
+# Pilot: sesuai jam & hari (UTC)
+iptables -A INPUT -s $PILOT_IPS -p icmp --icmp-type echo-request -m time --timestart $PILOT_START --timestop $PILOT_STOP --weekdays $PILOT_DAYS --utc -j ACCEPT
+iptables -A INPUT -s $PILOT_IPS -p tcp --dport 80 -m time --timestart $PILOT_START --timestop $PILOT_STOP --weekdays $PILOT_DAYS --utc -j ACCEPT
+iptables -A INPUT -s $PILOT_IPS -p icmp --icmp-type echo-request -j DROP
+iptables -A INPUT -s $PILOT_IPS -p tcp --dport 80 -j REJECT --reject-with tcp-reset
+
+# Staf Geofront: sesuai jam (UTC, setiap hari)
+iptables -A INPUT -s $STAF_IPS -p icmp --icmp-type echo-request -m time --timestart $STAF_START --timestop $STAF_STOP --utc -j ACCEPT
+iptables -A INPUT -s $STAF_IPS -p tcp --dport 80 -m time --timestart $STAF_START --timestop $STAF_STOP --utc -j ACCEPT
+iptables -A INPUT -s $STAF_IPS -p icmp --icmp-type echo-request -j DROP
+iptables -A INPUT -s $STAF_IPS -p tcp --dport 80 -j REJECT --reject-with tcp-reset
+```
+
+Pengujian dilakukan pada dua kondisi dengan menyesuaikan nilai variabel jadwal pada [`nodes/Pen-Pen/quest-14.sh`](nodes/Pen-Pen/quest-14.sh) agar mencocokkan dan tidak mencocokkan jam UTC saat pengujian, kemudian menjalankan ping dan akses TCP port `80` dari `Unit-01` ([`nodes/Unit-01/test-quest-14.sh`](nodes/Unit-01/test-quest-14.sh)), `Lilith` ([`nodes/Lilith/test-quest-14.sh`](nodes/Lilith/test-quest-14.sh)), serta `Spy` ([`nodes/Spy/test-quest-14.sh`](nodes/Spy/test-quest-14.sh)):
+
+![pembatasan jadwal akses pen-pen](screenshots/soal14.gif)
+
+Hasil pengujian menunjukkan ketika variabel jadwal sesuai dengan jam UTC saat itu, `Unit-01` dan `Lilith` berhasil melakukan ping (`0% packet loss`) serta menerima respons `Welcome to Pen-Pen` dari port `80`. Ketika variabel jadwal digeser ke luar jam UTC saat pengujian, keduanya ditolak (`100% packet loss` pada ping dan koneksi port `80` langsung diputus). Sementara itu, `Spy` sebagai bagian dari Terduga Dummy System selalu ditolak pada kedua kondisi.
+
+---
+
+### 15. Pembatasan Laju Ping (Rate Limiting ICMP) pada Tokyo3-Core
+
+Untuk mencegah banjir ping pada `Tokyo3-Core` (`10.64.4.106`), aturan rate limiting diterapkan melalui [`nodes/Tokyo3-Core/quest-15.sh`](nodes/Tokyo3-Core/quest-15.sh) menggunakan modul `limit` pada chain `INPUT`. Permintaan ping masuk (`icmp --icmp-type echo-request`) dibatasi maksimal 5 paket per detik (`--limit 5/second --limit-burst 5`) dan seluruh kelebihan paket langsung dibuang dengan target `DROP`. Aturan penyaringan `echo-request` diletakkan sebelum aturan `ESTABLISHED,RELATED` dan hanya menyasar tipe `echo-request` sehingga paket balasan `echo-reply` dari ping yang dikirim `Tokyo3-Core` sendiri tetap diizinkan tanpa pembatasan.
+
+Konfigurasi pada [`nodes/Tokyo3-Core/quest-15.sh`](nodes/Tokyo3-Core/quest-15.sh):
+
+```bash
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5 -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+```
+
+Pengujian dilakukan dari `Lilith` melalui [`nodes/Lilith/test-quest-15.sh`](nodes/Lilith/test-quest-15.sh) dengan mengirimkan ping rapat (`ping -i 0.1 -c 50 10.64.4.106`), memberi jeda 3 detik (`sleep 3`), lalu mengirim ping normal (`ping -c 5 10.64.4.106`). Pada sisi `Tokyo3-Core`, dilakukan pemeriksaan counter rule melalui `iptables -L INPUT -v -n` dan pengujian ping keluar menuju `Lilith` (`ping -i 0.1 -c 20 10.64.4.74`) melalui [`nodes/Tokyo3-Core/test-quest-15.sh`](nodes/Tokyo3-Core/test-quest-15.sh):
+
+![rate limiting ping tokyo3-core](screenshots/soal15.gif)
+
+Hasil pengujian menunjukkan pada pengiriman ping rapat 50 paket dari `Lilith`, sebagian paket hilang karena melewati batas 5 ping/detik dan counter paket pada rule `DROP` `echo-request` di `Tokyo3-Core` bertambah. Setelah jeda 3 detik, 5 ping normal dari `Lilith` seluruhnya berhasil (`0% packet loss`), serta ping rapat keluar dari `Tokyo3-Core` menuju `Lilith` tetap berjalan normal dengan `0% packet loss`.
+
+---
+
+### 16. Pencatatan dan Pemblokiran Port Scanning pada Tokyo3-Core
+
+Pada `Tokyo3-Core` (`10.64.4.106`), aturan deteksi dan pemblokiran pemindaian port dari `Dummy-Plug` (`10.64.4.51`) ditambahkan melalui [`nodes/Tokyo3-Core/quest-16.sh`](nodes/Tokyo3-Core/quest-16.sh) dengan tetap mempertahankan aturan pembatasan ping dari soal sebelumnya. Setiap percobaan koneksi TCP dari `10.64.4.51` menuju port sensitif `22`, `23`, dan `3306` dicatat terlebih dahulu menggunakan target `LOG` dengan prefix `SCAN-NERV: `, lalu langsung ditolak menggunakan `REJECT --reject-with tcp-reset`. Layanan port `80` dan `8080` tetap dibiarkan terbuka dan trafik dari klien lain tidak dibatasi.
+
+Konfigurasi pada [`nodes/Tokyo3-Core/quest-16.sh`](nodes/Tokyo3-Core/quest-16.sh):
+
+```bash
+iptables -F INPUT
+iptables -P INPUT ACCEPT
+
+iptables -A INPUT -i lo -j ACCEPT
+
+iptables -A INPUT -s 10.64.4.51 -p tcp -m multiport --dports 22,23,3306 -j LOG --log-prefix "SCAN-NERV: " --log-level 4
+iptables -A INPUT -s 10.64.4.51 -p tcp -m multiport --dports 22,23,3306 -j REJECT --reject-with tcp-reset
+
+iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 5/second --limit-burst 5 -j ACCEPT
+iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+```
+
+Pengujian dilakukan dari `Dummy-Plug` melalui [`nodes/Dummy-Plug/test-quest-16.sh`](nodes/Dummy-Plug/test-quest-16.sh) dengan mencoba port `22`, `23`, `3306` (mencatat exit code dan durasi respons) serta port `80` dan `8080`, dilanjutkan pengujian akses port `80` dan `8080` dari `Lilith` ([`nodes/Lilith/test-quest-16.sh`](nodes/Lilith/test-quest-16.sh)) serta pemeriksaan counter rule `LOG` melalui `iptables -L INPUT -v -n` di `Tokyo3-Core`:
+
+![pencatatan dan pemblokiran port scanning tokyo3-core](screenshots/soal16.gif)
+
+Hasil pengujian menunjukkan koneksi `Dummy-Plug` ke port `22`, `23`, dan `3306` langsung ditolak seketika (`Exit code: 1`, durasi dalam hitungan milidetik) tanpa menunggu timeout, sementara akses ke port `80` (`Welcome to Tokyo3-Core`) dan `8080` (`syifa imutz`) dari `Dummy-Plug` maupun `Lilith` tetap berhasil. Pada `Tokyo3-Core`, counter paket pada rule `LOG` dengan prefix `SCAN-NERV:` meningkat sesuai jumlah percobaan koneksi dari `Dummy-Plug`.
+
+---
+
+### 17. Pengalihan Trafik TCP (DNAT) pada Router Fuyutsuki
+
+Untuk mengalihkan koneksi TCP dari `Magi-Casper` (`10.64.4.58`) yang ditujukan ke `Zeruel` (`10.64.4.82`) agar masuk ke `Pen-Pen` (`10.64.3.194`) tanpa disadari pengirim, aturan **DNAT (Destination NAT)** diterapkan pada router gateway `Switch-Terminal`, yaitu `Fuyutsuki`, melalui [`nodes/Fuyutsuki/quest-17.sh`](nodes/Fuyutsuki/quest-17.sh). Karena `Fuyutsuki` juga menjadi router jalur menuju cabang `Maya` (`Switch-Medic`), paket balasan dari `Pen-Pen` pasti melewati `Fuyutsuki` kembali sehingga tabel `conntrack` secara otomatis mengembalikan alamat sumber menjadi `10.64.4.82`. Filter protokol `-p tcp` memastikan trafik ICMP (`ping`) dari `Magi-Casper` ke `Zeruel` tidak ikut dialihkan.
+
+Konfigurasi pada [`nodes/Fuyutsuki/quest-17.sh`](nodes/Fuyutsuki/quest-17.sh):
+
+```bash
+sysctl -w net.ipv4.ip_forward=1
+
+iptables -t nat -F PREROUTING
+iptables -t nat -F POSTROUTING
+
+iptables -t nat -A PREROUTING -s 10.64.4.58 -d 10.64.4.82 -p tcp -j DNAT --to-destination 10.64.3.194
+```
+
+Pengujian dilakukan dengan mengaktifkan listener TCP port `9000` pada `Pen-Pen` ([`nodes/Pen-Pen/test-quest-17.sh`](nodes/Pen-Pen/test-quest-17.sh)) dan `Zeruel` ([`nodes/Zeruel/test-quest-17.sh`](nodes/Zeruel/test-quest-17.sh)), mengirim pesan TCP ke `10.64.4.82` port `9000` beserta uji ping ke `10.64.4.82` dari `Magi-Casper` ([`nodes/Magi-Casper/test-quest-17.sh`](nodes/Magi-Casper/test-quest-17.sh)), lalu memeriksa tabel pelacakan koneksi melalui `conntrack -L` pada `Fuyutsuki`:
+
+![pengalihan trafik dnat pada fuyutsuki](screenshots/soal17.gif)
+
+Hasil pengujian menunjukkan pesan yang dikirim `Magi-Casper` ke IP `Zeruel` port `9000` diterima dan tampil pada terminal `Pen-Pen`, sementara terminal `Zeruel` tidak menerima pesan apa pun. Ping dari `Magi-Casper` ke `10.64.4.82` tetap berhasil tanpa dialihkan, dan tabel `conntrack` pada `Fuyutsuki` menampilkan entri koneksi TCP dengan tujuan awal `10.64.4.82` yang dibalas dari `10.64.3.194`.
+
+---
+
+### 18. Pembatasan Akses Zona Sensitif pada Router Shigeru
+
+Zona sensitif `Switch-Monolith` dan `Switch-Radar` diamankan melalui chain `FORWARD` pada router `Shigeru` ([`nodes/Shigeru/quest-18.sh`](nodes/Shigeru/quest-18.sh)). Penyaringan diterapkan berdasarkan arah kedatangan paket pada interface `eth0` (yang menghadap `Gendou`) agar seluruh subnet eksternal maupun subnet baru otomatis diblokir tanpa menuliskan daftar subnet luar satu per satu. Aturan `ESTABLISHED,RELATED` diletakkan di urutan pertama agar node di dalam zona tetap dapat memulai koneksi keluar dan menerima balasannya, diikuti satu pengecualian untuk ping masuk (`echo-request`) dari subnet `Switch-Terminal` (`10.64.4.56/29`), lalu seluruh trafik masuk lainnya dari `eth0` dijatuhkan (`DROP`).
+
+Konfigurasi pada [`nodes/Shigeru/quest-18.sh`](nodes/Shigeru/quest-18.sh):
+
+```bash
+sysctl -w net.ipv4.ip_forward=1
+
+iptables -F FORWARD
+iptables -P FORWARD ACCEPT
+
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i eth0 -s 10.64.4.56/29 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A FORWARD -i eth0 -j DROP
+```
+
+Pengujian dilakukan dengan menjalankan ping menuju `Zeruel` (`10.64.4.82`) dari `Magi-Casper` ([`nodes/Magi-Casper/test-quest-18.sh`](nodes/Magi-Casper/test-quest-18.sh)) dan `Lilith` ([`nodes/Lilith/test-quest-18.sh`](nodes/Lilith/test-quest-18.sh)), serta menguji koneksi keluar dari `Zeruel` menuju `Lilith` (`10.64.4.74`) dan `8.8.8.8` ([`nodes/Zeruel/test-quest-18.sh`](nodes/Zeruel/test-quest-18.sh)):
+
+![pembatasan akses zona sensitif shigeru](screenshots/soal18.gif)
+
+Hasil pengujian menunjukkan ping dari `Magi-Casper` (`Switch-Terminal`) ke `Zeruel` berhasil (`0% packet loss`), ping dari `Lilith` ke `Zeruel` gagal (`100% packet loss`), dan ping yang diinisiasi oleh `Zeruel` ke `Lilith` maupun `8.8.8.8` tetap berjalan lancar (`0% packet loss`).
+
+---
+
+### 19. Isolasi Total Armisael pada Router Shigeru dan Zeruel
+
+Untuk mengisolasi `Armisael` (`10.64.4.83`) secara menyeluruh tanpa menyentuh konfigurasi di dalam node `Armisael` sendiri dan tanpa mengganggu `Zeruel` (`10.64.4.82`), pemblokiran diterapkan pada dua titik:
+
+1. **Pada router `Shigeru`** ([`nodes/Shigeru/quest-19.sh`](nodes/Shigeru/quest-19.sh)): seluruh trafik dari dan menuju `10.64.4.83` diblokir pada chain `INPUT`, `OUTPUT`, dan `FORWARD` sehingga `Armisael` terputus dari gateway (`10.64.4.81`), seluruh subnet internal lain, serta internet (`8.8.8.8`), sementara aturan penjagaan zona sensitif dari soal 18 tetap dipertahankan.
+2. **Pada host `Zeruel`** ([`nodes/Zeruel/quest-19.sh`](nodes/Zeruel/quest-19.sh)): karena `Zeruel` dan `Armisael` berada pada satu switch (`Switch-Monolith`) sehingga komunikasi layer-2 antar keduanya tidak melewati `Shigeru`, blokir lokal ditambahkan pada chain `INPUT` dan `OUTPUT` di `Zeruel` khusus untuk alamat `10.64.4.83`.
+
+Konfigurasi pada [`nodes/Shigeru/quest-19.sh`](nodes/Shigeru/quest-19.sh):
+
+```bash
+iptables -F INPUT
+iptables -F OUTPUT
+iptables -F FORWARD
+iptables -P INPUT ACCEPT
+iptables -P OUTPUT ACCEPT
+iptables -P FORWARD ACCEPT
+
+iptables -A INPUT -s 10.64.4.83 -j DROP
+iptables -A OUTPUT -d 10.64.4.83 -j DROP
+iptables -A FORWARD -s 10.64.4.83 -j DROP
+iptables -A FORWARD -d 10.64.4.83 -j DROP
+
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i eth0 -s 10.64.4.56/29 -p icmp --icmp-type echo-request -j ACCEPT
+iptables -A FORWARD -i eth0 -j DROP
+```
+
+Konfigurasi pada [`nodes/Zeruel/quest-19.sh`](nodes/Zeruel/quest-19.sh):
+
+```bash
+iptables -F INPUT
+iptables -F OUTPUT
+iptables -P INPUT ACCEPT
+iptables -P OUTPUT ACCEPT
+
+iptables -A INPUT -s 10.64.4.83 -j DROP
+iptables -A OUTPUT -d 10.64.4.83 -j DROP
+```
+
+Pengujian dilakukan dengan mengaktifkan listener TCP port `9000` pada `Armisael`, `Zeruel`, dan `Lilith` ([`nodes/Lilith/test-quest-19.sh`](nodes/Lilith/test-quest-19.sh)), kemudian menjalankan pengujian ping dan `nc` (TCP port `53` ke `8.8.8.8`, TCP port `9000` ke `Zeruel` dan `Lilith`, serta ping ke gateway `10.64.4.81`) dari `Armisael` ([`nodes/Armisael/test-quest-19.sh`](nodes/Armisael/test-quest-19.sh)) dan `Zeruel` ([`nodes/Zeruel/test-quest-19.sh`](nodes/Zeruel/test-quest-19.sh)):
+
+![isolasi total armisael](screenshots/soal19.gif)
+
+Hasil pengujian menunjukkan seluruh percobaan ping dan `nc` dari `Armisael` menuju `8.8.8.8`, `Zeruel`, `Lilith`, maupun gateway `10.64.4.81` gagal seluruhnya (`100% packet loss` dan `Exit code: 1`). Sebaliknya, `Zeruel` tetap dapat melakukan ping dan koneksi `nc` menuju `8.8.8.8` (TCP `53`) serta `Lilith` (TCP `9000`) dengan `0% packet loss` dan `Exit code: 0`.
+
+---
+
+### 20. Uji Pemulihan Konfigurasi Firewall dan Routing (Uji Kebakaran Geofront)
+
+Uji ketahanan dan idempotensi pemulihan diterapkan pada tiga node yang mewakili router utama, router cabang, dan host layanan:
+
+| Node | Peran | Berkas Backup Rule | Skrip Pemulihan Rute | Skrip Uji |
+| --- | --- | --- | --- | --- |
+| `Gendou` | Router utama | `/root/gendou.rules` | `/root/gendou.sh` | [`nodes/Gendou/quest-20.sh`](nodes/Gendou/quest-20.sh) |
+| `Shigeru` | Router cabang | `/root/shigeru.rules` | `/root/shigeru.sh` | [`nodes/Shigeru/quest-20.sh`](nodes/Shigeru/quest-20.sh) |
+| `Magi-Balthasar` | Host layanan MAGI | `/root/balthasar.rules` | `/root/balthasar.sh` | [`nodes/Magi-Balthasar/quest-20.sh`](nodes/Magi-Balthasar/quest-20.sh) |
+
+Pada setiap node, seluruh aturan firewall aktif dicadangkan terlebih dahulu menggunakan `iptables-save > /root/<nama>.rules`, kemudian seluruh aturan `iptables` (tabel `filter` dan `nat`) beserta rute statis/default dihapus. Pemulihan dilakukan menggunakan `iptables-restore < /root/<nama>.rules` dan `/root/<nama>.sh` sebanyak dua kali berturut-turut. Karena `iptables-restore` secara otomatis mengganti isi tabel yang ada dan skrip rute menggunakan `ip route replace`, eksekusi berulang tidak menghasilkan duplikasi aturan maupun entri rute.
+
+Cuplikan alur pemulihan pada [`nodes/Shigeru/quest-20.sh`](nodes/Shigeru/quest-20.sh):
+
+```bash
+# Backup aturan aktif
+iptables-save > /root/shigeru.rules
+
+# Hapus seluruh rule iptables (filter + nat) dan rute statis
+iptables -F && iptables -X
+iptables -P INPUT ACCEPT && iptables -P FORWARD ACCEPT && iptables -P OUTPUT ACCEPT
+iptables -t nat -F && iptables -t nat -X
+ip route del default 2>/dev/null
+ip route del 10.64.4.88/29 2>/dev/null
+
+# Pemulihan pertama dan kedua secara berturut-turut
+iptables-restore < /root/shigeru.rules && /root/shigeru.sh
+iptables-restore < /root/shigeru.rules && /root/shigeru.sh
+```
+
+Pengujian dilakukan dengan menjalankan `quest-20.sh` pada `Gendou`, `Shigeru`, dan `Magi-Balthasar` untuk membandingkan jumlah baris `iptables -S`, `iptables -t nat -S`, dan `ip route show` pada pemulihan pertama dan kedua, disertai pengujian ping ke jaringan internal dan `8.8.8.8`:
+
+![uji pemulihan gendou shigeru dan magi-balthasar](screenshots/soal20.png)
+
+Hasil pengujian pada ketiga node menunjukkan jumlah baris aturan `filter`, `nat`, dan tabel routing identik antara pemulihan pertama dan pemulihan kedua (tidak terjadi duplikasi), serta seluruh pengujian ping menuju jaringan internal maupun `8.8.8.8` kembali berhasil dengan `0% packet loss`.
